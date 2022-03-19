@@ -5,8 +5,8 @@ set(EXTRA_COMPONENT_DIRS $ENV{IDF_PATH}/examples/common_components/led_strip)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(MMEBF)
 
-include(CMakeListsPrivate.txt)
-
+#include(CMakeListsPrivate.txt)
+#
 #if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/CMakeListsUser.txt)
 #include(CMakeListsUser.txt)
 #endif()
