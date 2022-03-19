@@ -11,5 +11,6 @@
 typedef void (*CAN_MsgHandler)(twai_message_t* msg);
 
 void canInit(CAN_MsgHandler handler);
+void canSend(const twai_message_t *msg);
 
 #endif //MMEBF_CAN_H

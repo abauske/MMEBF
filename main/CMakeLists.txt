@@ -1,2 +1,2 @@
-idf_component_register(SRCS esp_hid_host_main.c can.c led.c ble_beacon.c
+idf_component_register(SRCS esp_hid_host_main.c can.c led.c ble_beacon.c wheel_sensor.c
         INCLUDE_DIRS ".")
