@@ -1,3 +1,4 @@
+#include <sys/cdefs.h>
 //
 // Created by adria on 17.03.2022.
 //
@@ -6,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "powersaving.h"
 
 #define TX_GPIO_NUM                     10
 #define RX_GPIO_NUM                     1
@@ -23,13 +25,25 @@ static const twai_general_config_t g_config = {.mode = TWAI_MODE_NORMAL,
 
 static CAN_MsgHandler msgHandler;
 
-static void canReceiveTask(void *arg) {
+static void disable() {
+  ESP_ERROR_CHECK(twai_stop());
+  ESP_ERROR_CHECK(twai_driver_uninstall());
+}
+
+static void enable() {
+  ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
+  ESP_ERROR_CHECK(twai_start());
+}
+
+_Noreturn static void canReceiveTask(void *arg) {
   while (1) {
 //    ESP_LOGI(CAN_TAG, "Trying to receive next CAN message");
     twai_message_t rx_msg;
     esp_err_t err = twai_receive(&rx_msg, portMAX_DELAY);
     if(err == ESP_ERR_TIMEOUT) {
       continue;
+    } else if(err == ESP_ERR_INVALID_STATE) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS); // sleep more in power save mode
     }
     if(err == ESP_OK) {
       msgHandler(&rx_msg);
@@ -38,10 +52,8 @@ static void canReceiveTask(void *arg) {
 }
 
 void canInit(CAN_MsgHandler handler) {
-  ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
-  ESP_LOGI(CAN_TAG, "Driver installed");
-  ESP_ERROR_CHECK(twai_start());
-  ESP_LOGI(CAN_TAG, "Driver started");
+  enable();
+  registerPowerSavingActions(disable, enable);
 
   msgHandler = handler;
 

@@ -13,6 +13,8 @@
 #include "can.h"
 #include "ble_beacon.h"
 #include "wheel_sensor.h"
+#include "bt_con.h"
+#include "powersaving.h"
 
 static const char *TAG = "MAIN";
 
@@ -49,9 +51,11 @@ static void canHandler(twai_message_t* msg) {
 
 void app_main(void)
 {
-  ledInit(2);
+  powerSavingInit();
+//  ledInit(2);
   canInit(canHandler);
   wheelSensorInit();
+  btInit();
 //  bleInit();
 
 //  while(1) {

@@ -1,3 +1,4 @@
+#include <sys/cdefs.h>
 //
 // Created by adria on 19.03.2022.
 //
@@ -10,6 +11,7 @@
 #include "esp_log.h"
 
 #include "wheel_sensor.h"
+#include "powersaving.h"
 
 #define WHEEL_CIRCUMFENCE_MM 2149
 #define uSEC_DELAY_x_KMH(x) (1000000 / (x * 1000 * 1000 / 60 / 60 / WHEEL_CIRCUMFENCE_MM))
@@ -25,9 +27,18 @@ static uint64_t newEdgeTime = 0;
 static bool overrun = false;
 static uint64_t lastDoneEdgeTime = 0;
 static uint32_t rotationCounter = 0;
+static uint32_t sleepMs = 10;
 
 uint32_t currentSpeed_mph = 0;
-bool fastMode = true;
+bool fastMode = false;
+
+void enterPowerSave() {
+  sleepMs = 500;
+}
+
+void exitPowerSave() {
+  sleepMs = 10;
+}
 
 static void negedgeHandler() {
   uint32_t gpio_intr_status = GPIO.status.val;
@@ -49,20 +60,18 @@ static void negedgeHandler() {
   rotationCounter++;
 }
 
-static void wheelSensorTask() {
+_Noreturn static void wheelSensorTask() {
   // Register isr here as this makes sure it runs on the same core so no synchronization should be required
   gpio_isr_register(negedgeHandler, NULL, ESP_INTR_FLAG_EDGE, NULL);
   
   while(1) {
-    vTaskDelay(10 / portTICK_PERIOD_MS); // about 100 Hz should be left
-    if(overrun) {
-      ESP_LOGW(WHEEL_TAG, "Overrun detected!");
-    }
+    vTaskDelay(sleepMs / portTICK_PERIOD_MS); // about 100 Hz should be left
     int64_t now = esp_timer_get_time();
     uint64_t newTime = newEdgeTime;
     if(newEdge) {
       newEdge = false;
       missingTicks++;
+      resumeFromPowerSaveMode();
 
       uint64_t delta = newTime - lastEdgeTime;
       // Real calculation is:
@@ -75,16 +84,27 @@ static void wheelSensorTask() {
       currentSpeed_mph = speed_mph;
       lastEdgeTime = newTime;
       ESP_LOGI(WHEEL_TAG, "Rotations done: %d, Speed: %lld", rotationCounter, speed_mph / 1000);
-    } else if(now - lastEdgeTime > 3 * 1000 * 1000) {
+    } else if(now - lastEdgeTime > 1500 * 1000) {
       currentSpeed_mph = 0;
+      if(now - lastEdgeTime > 60 * 1000 * 1000 && missingTicks <= 0) {
+        enterPowerSaveMode();
+      }
+    }
+
+    if(overrun) {
+      ESP_LOGW(WHEEL_TAG, "Overrun detected!");
+      currentSpeed_mph = 77777;
     }
 
     if(missingTicks > 0) {
-      if(!fastMode || now - lastDoneEdgeTime >= uSEC_DELAY_x_KMH(20)) {
-        // Forward the Signal to the motor
+      uint64_t timeSinceLastOutput = now - lastDoneEdgeTime;
+      bool recapAtMaxSpeed = (!fastMode || currentSpeed_mph == 0) && timeSinceLastOutput >= uSEC_DELAY_x_KMH(60);
+      if(recapAtMaxSpeed || timeSinceLastOutput >= uSEC_DELAY_x_KMH(20)) {
+        // Forward the signal to the motor
         gpio_set_level(OUTPUT_PIN, 1);
         missingTicks--;
         lastDoneEdgeTime = now;
+        vTaskDelay(1);
         gpio_set_level(OUTPUT_PIN, 0);
       }
     }
@@ -109,6 +129,8 @@ void wheelSensorInit() {
   conf.pull_up_en = 1;
   conf.pull_down_en = 0;
   gpio_config(&conf);
+
+  registerPowerSavingActions(enterPowerSave, exitPowerSave);
   
   xTaskCreatePinnedToCore(wheelSensorTask, "WheelSensor", 4096, NULL, 2, NULL, 0);
 }
