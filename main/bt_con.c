@@ -211,5 +211,5 @@ void btInit() {
 
   enable();
 
-  registerPowerSavingActions(enable, disable);
+  registerPowerSavingActions(disable, enable);
 }

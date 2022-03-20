@@ -31,6 +31,7 @@ static uint32_t sleepMs = 10;
 
 uint32_t currentSpeed_mph = 0;
 bool fastMode = false;
+bool motorHasRealSpeed = true;
 
 void enterPowerSave() {
   sleepMs = 500;
@@ -98,7 +99,7 @@ _Noreturn static void wheelSensorTask() {
 
     if(missingTicks > 0) {
       uint64_t timeSinceLastOutput = now - lastDoneEdgeTime;
-      bool recapAtMaxSpeed = (!fastMode || currentSpeed_mph == 0) && timeSinceLastOutput >= uSEC_DELAY_x_KMH(60);
+      bool recapAtMaxSpeed = (!fastMode || currentSpeed_mph == 0) && timeSinceLastOutput >= uSEC_DELAY_x_KMH(120);
       if(recapAtMaxSpeed || timeSinceLastOutput >= uSEC_DELAY_x_KMH(20)) {
         // Forward the signal to the motor
         gpio_set_level(OUTPUT_PIN, 1);
@@ -107,6 +108,7 @@ _Noreturn static void wheelSensorTask() {
         vTaskDelay(1);
         gpio_set_level(OUTPUT_PIN, 0);
       }
+      motorHasRealSpeed = missingTicks == 0;
     }
   }
 }

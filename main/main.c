@@ -20,6 +20,7 @@ static const char *TAG = "MAIN";
 
 extern uint32_t currentSpeed_mph;
 extern bool fastMode;
+extern bool motorHasRealSpeed;
 
 static void canHandler(twai_message_t* msg) {
   uint8_t data[12];
@@ -39,7 +40,7 @@ static void canHandler(twai_message_t* msg) {
   }
 //      printf("CAN: Received message: %08X     %d    %02X %02X %02X %02X %02X %02X %02X %02X\n", msg->identifier, msg->data_length_code, data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11]);
 //  bleSetData(data, msg->data_length_code + sizeof(msg->identifier));
-  if(fastMode && currentSpeed_mph > 20000) {
+  if(!motorHasRealSpeed) {
     static twai_message_t out = {};
     out.identifier = 0x201;
     out.data_length_code = 5;
