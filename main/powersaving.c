@@ -51,3 +51,7 @@ void registerPowerSavingActions(powerSaveAction enterPowerSaveAction, powerSaveA
   exitActions[actionCount] = exitPowerSaveAction;
   actionCount++;
 }
+
+bool isPowerSafeEnabled() {
+  return powerSaveEnabled;
+}

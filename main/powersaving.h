@@ -11,5 +11,6 @@ void powerSavingInit();
 void enterPowerSaveMode();
 void resumeFromPowerSaveMode();
 void registerPowerSavingActions(powerSaveAction enterPowerSaveAction, powerSaveAction exitPowerSaveAction);
+bool isPowerSafeEnabled();
 
 #endif //MMEBF_POWERSAVING_H

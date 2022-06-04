@@ -20,8 +20,11 @@
 
 static const char *WHEEL_TAG = "WHEEL";
 
+extern bool btConnected;
+
 static uint64_t lastEdgeTime = 0;
 static uint32_t missingTicks = 0;
+static uint32_t recapStartTicks = 0;
 static bool newEdge = false;
 static uint64_t newEdgeTime = 0;
 static bool overrun = false;
@@ -30,8 +33,19 @@ static uint32_t rotationCounter = 0;
 static uint32_t sleepMs = 10;
 
 uint32_t currentSpeed_mph = 0;
-bool fastMode = false;
+bool lastTickFastMode = false;
 bool motorHasRealSpeed = true;
+
+#define TICK_MODE_NORMAL 0
+#define TICK_MODE_SLOW_RECAP 1
+#define TICK_MODE_FAST 2
+uint8_t tickMode = TICK_MODE_NORMAL;
+
+uint32_t bootupMileage = 0;
+uint32_t totalTickCount = 0;
+uint64_t lastMilageUpdateTime = 0;
+uint32_t lastTickMileage = 0;
+extern uint32_t mileage;
 
 void enterPowerSave() {
   sleepMs = 500;
@@ -69,9 +83,11 @@ _Noreturn static void wheelSensorTask() {
     vTaskDelay(sleepMs / portTICK_PERIOD_MS); // about 100 Hz should be left
     int64_t now = esp_timer_get_time();
     uint64_t newTime = newEdgeTime;
+    uint64_t timeSinceLastOutput = now - lastDoneEdgeTime;
     if(newEdge) {
       newEdge = false;
       missingTicks++;
+      totalTickCount++;
       resumeFromPowerSaveMode();
 
       uint64_t delta = newTime - lastEdgeTime;
@@ -85,9 +101,9 @@ _Noreturn static void wheelSensorTask() {
       currentSpeed_mph = speed_mph;
       lastEdgeTime = newTime;
       ESP_LOGI(WHEEL_TAG, "Rotations done: %d, Speed: %lld", rotationCounter, speed_mph / 1000);
-    } else if(now - lastEdgeTime > 1500 * 1000) {
+    } else if(now - lastEdgeTime > 2500 * 1000) {
       currentSpeed_mph = 0;
-      if(now - lastEdgeTime > 60 * 1000 * 1000 && missingTicks <= 0) {
+      if(now - lastEdgeTime > 60 * 1000 * 1000 && missingTicks <= 0 && timeSinceLastOutput > 10000000) {
         enterPowerSaveMode();
       }
     }
@@ -97,10 +113,55 @@ _Noreturn static void wheelSensorTask() {
       currentSpeed_mph = 77777;
     }
 
+    if(mileage > 0 && bootupMileage == 0) {
+      bootupMileage = mileage;
+    } else if(lastTickMileage != mileage) {
+      lastMilageUpdateTime = now;
+      lastTickMileage = mileage;
+    }
+    bool fastMode = btConnected;
+
     if(missingTicks > 0) {
-      uint64_t timeSinceLastOutput = now - lastDoneEdgeTime;
-      bool recapAtMaxSpeed = (!fastMode || currentSpeed_mph == 0) && timeSinceLastOutput >= uSEC_DELAY_x_KMH(120);
-      if(recapAtMaxSpeed || timeSinceLastOutput >= uSEC_DELAY_x_KMH(20)) {
+
+      if(!fastMode && lastTickFastMode) {
+        // we have just exited fast mode -> recap ticks but keep real speed
+        tickMode = TICK_MODE_SLOW_RECAP;
+        recapStartTicks = missingTicks;
+      } else if(fastMode) {
+        tickMode = TICK_MODE_FAST;
+      }
+
+      bool standingRecap = currentSpeed_mph == 0 && timeSinceLastOutput >= uSEC_DELAY_x_KMH(120) && missingTicks > 10;
+      bool doTick = true;
+      switch (tickMode) {
+        case TICK_MODE_NORMAL:
+          doTick = true;
+          break;
+        case TICK_MODE_SLOW_RECAP:
+          if(missingTicks > recapStartTicks) {
+            // we are driving faster than recapping -> forward tick and set new upper limit
+            doTick = true;
+            recapStartTicks = missingTicks - 1;
+          } else if(timeSinceLastOutput >= uSEC_DELAY_x_KMH(25) || standingRecap) {
+            doTick = true;
+            // missing ticks will be decreased by 1 so recapStartTicks is one more to accomodate for a potential later
+            // coming next tick, that would cause double ticks -> would cancel motor support from 10 km/h onwards
+            recapStartTicks = missingTicks;
+          } else {
+            doTick = false; // no new tick came in and time for recap is not over
+          }
+          break;
+        case TICK_MODE_FAST:
+          doTick = timeSinceLastOutput >= uSEC_DELAY_x_KMH(20)    // we are driving -> tick slowly
+              || standingRecap;                                   // we are standing -> tick fast
+          break;
+
+        default: // should never be used
+          doTick = true;
+          break;
+      }
+
+      if(doTick) {
         // Forward the signal to the motor
         gpio_set_level(OUTPUT_PIN, 1);
         missingTicks--;
@@ -109,7 +170,13 @@ _Noreturn static void wheelSensorTask() {
         gpio_set_level(OUTPUT_PIN, 0);
       }
       motorHasRealSpeed = missingTicks == 0;
+    } else if(mileage < bootupMileage + totalTickCount * WHEEL_CIRCUMFENCE_MM / 1000 && now - lastMilageUpdateTime < 10000000) {
+      // get to the end result slowly -> only add 4/5 of what we expect we need to add
+      missingTicks += (totalTickCount - (mileage - bootupMileage) * 1000 / WHEEL_CIRCUMFENCE_MM) * 4 / 5 + 1;
+    } else {
+      tickMode = TICK_MODE_NORMAL; // everything recapped -> go to normal
     }
+    lastTickFastMode = fastMode;
   }
 }
 

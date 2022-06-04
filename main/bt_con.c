@@ -30,6 +30,8 @@
 
 static const char *TAG = "BT";
 
+bool btConnected = false;
+
 typedef struct
 {
   xTaskHandle task_hdl;
@@ -143,29 +145,27 @@ static esp_hid_device_config_t ble_hid_config = {
     .report_maps_len    = 2
 };
 
-extern bool fastMode;
-
 static void ble_hidd_event_callback(void *handler_args, esp_event_base_t base, int32_t id, void *event_data)
 {
   esp_hidd_event_t event = (esp_hidd_event_t)id;
 
   switch (event) {
     case ESP_HIDD_START_EVENT: {
-      fastMode = false;
+      btConnected = false;
       esp_hid_ble_gap_adv_start();
       break;
     }
     case ESP_HIDD_CONNECT_EVENT: {
-      fastMode = true;
+      btConnected = true;
       break;
     }
     case ESP_HIDD_DISCONNECT_EVENT: {
-      fastMode = false;
+      btConnected = false;
       esp_hid_ble_gap_adv_start();
       break;
     }
     case ESP_HIDD_STOP_EVENT: {
-      fastMode = false;
+      btConnected = false;
       break;
     }
     default:
