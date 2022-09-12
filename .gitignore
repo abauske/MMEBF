@@ -4,3 +4,8 @@ build
 .idea
 .travis.yml
 CMakeListsPrivate.txt
+.vscode
+_deps
+cmake-*
+.DS_Store
+*.pdf
