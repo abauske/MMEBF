@@ -9,6 +9,7 @@
 #include <driver/gpio.h>
 #include <hal/gpio_hal.h>
 #include "esp_log.h"
+#include "can.h"
 
 #include "wheel_sensor.h"
 #include "powersaving.h"
@@ -28,7 +29,7 @@ static uint32_t recapStartTicks = 0;
 static bool newEdge = false;
 static uint64_t newEdgeTime = 0;
 static bool overrun = false;
-static uint64_t lastDoneEdgeTime = 0;
+uint64_t lastDoneEdgeTime = 0;
 static uint32_t rotationCounter = 0;
 static uint32_t sleepMs = 10;
 
@@ -75,6 +76,18 @@ static void negedgeHandler() {
   rotationCounter++;
 }
 
+static void setSpeedMph(uint32_t speedMph) {
+  static twai_message_t out = {};
+
+  currentSpeed_mph = speedMph;
+
+  out.identifier = 0x737;
+  out.data_length_code = 5;
+  uint16_t *speedLocation = (uint16_t *) out.data;
+  *speedLocation = (uint16_t) (currentSpeed_mph / 10);
+  canSend(&out);
+}
+
 _Noreturn static void wheelSensorTask() {
   // Register isr here as this makes sure it runs on the same core so no synchronization should be required
   gpio_isr_register(negedgeHandler, NULL, ESP_INTR_FLAG_EDGE, NULL);
@@ -98,11 +111,11 @@ _Noreturn static void wheelSensorTask() {
 //      uint64_t speed_mph = speed_mmph / 1000;
       // But we use this to prevent loss of precission:
       uint64_t speed_mph = 1000000 / 1000 * WHEEL_CIRCUMFENCE_MM * 60 / delta * 60;
-      currentSpeed_mph = speed_mph;
+      setSpeedMph(speed_mph);
       lastEdgeTime = newTime;
       ESP_LOGI(WHEEL_TAG, "Rotations done: %d, Speed: %lld", rotationCounter, speed_mph / 1000);
     } else if(now - lastEdgeTime > 2500 * 1000) {
-      currentSpeed_mph = 0;
+      setSpeedMph(0);
       if(now - lastEdgeTime > 60 * 1000 * 1000 && missingTicks <= 0 && timeSinceLastOutput > 10000000) {
         enterPowerSaveMode();
       }
@@ -110,7 +123,7 @@ _Noreturn static void wheelSensorTask() {
 
     if(overrun) {
       ESP_LOGW(WHEEL_TAG, "Overrun detected!");
-      currentSpeed_mph = 77777;
+      setSpeedMph(66666);
     }
 
     if(mileage > 0 && bootupMileage == 0) {
