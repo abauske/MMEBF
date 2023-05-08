@@ -12,8 +12,11 @@
 #include "pico/multicore.h"
 #include "can2040.h"
 
+#define ABS_MINUS(a, b) a > b ? (a - b) : (b - a)
+
 #define CAN_TIMEOUT_US 500000
 #define REAL_SPEED_TIMEOUT_MS 10000
+#define MAX_A_x_100 300
 
 typedef struct can2040 CANHandle;
 typedef struct can2040_msg CANMsg;
@@ -27,7 +30,12 @@ static absolute_time_t can1TxTime;
 static absolute_time_t can1RxTime;
 
 static absolute_time_t realSpeedMsgTime;
-static uint16_t realSpeed;
+static uint16_t realSpeed = 0;
+static absolute_time_t speedUpdateTime;
+
+static uint64_t failedA = -1;
+static uint64_t failedDs = -1;
+static uint64_t failedDt = -1;
 
 static void can2040_cb0(CANHandle *cd, uint32_t notify, CANMsg *msg) {
   switch (notify) {
@@ -44,20 +52,39 @@ static void can2040_cb0(CANHandle *cd, uint32_t notify, CANMsg *msg) {
   }
 }
 
+static void set_real_speed(uint16_t speed) {
+  // speed is kmh * 100
+  absolute_time_t now = get_absolute_time();
+  int64_t dt = absolute_time_diff_us(speedUpdateTime, now);
+  uint64_t ds = ABS_MINUS(speed, realSpeed);
+  // 1000 * 1000 because dt is us; 1000 / 3600 to change from kmh to m/s
+  uint64_t a = ds * (1000 * 1000 * 1000 / 3600 / 100) / dt;
+  if(a > MAX_A_x_100) {
+    failedA = a;
+    failedDt = dt;
+    failedDs = ds;
+    return;
+  }
+
+  realSpeed = speed;
+  speedUpdateTime = now;
+}
+
 static void can2040_cb1(CANHandle *cd, uint32_t notify, CANMsg *msg) {
   switch (notify) {
     case CAN2040_NOTIFY_RX: {
       can1RxTime = get_absolute_time();
 //      printf("Received CAN1\n");
       if(msg->id == 0x201) { // motor speed msg
-        if(!time_reached(delayed_by_ms(realSpeedMsgTime, REAL_SPEED_TIMEOUT_MS))) {
-          // no timeout
-          *((uint16_t*) msg->data) = realSpeed;
+        if(time_reached(delayed_by_ms(realSpeedMsgTime, REAL_SPEED_TIMEOUT_MS))) {
+          // timeout
+          set_real_speed(*((uint16_t*) msg->data));
         }
+        *((uint16_t*) msg->data) = MIN(realSpeed, 7200); // speed is kmh * 100
         can2040_transmit(&can0, msg);
       } else if(msg->id == 0x737) { // real speed msg
         realSpeedMsgTime = get_absolute_time();
-        realSpeed = *((uint16_t*) msg->data);
+        set_real_speed(*((uint16_t*) msg->data));
       } else {
         can2040_transmit(&can0, msg);
       }
@@ -110,13 +137,9 @@ void wd_cond_trigger() {
 
 int main() {
   stdio_init_all();
-
-//  sleep_ms(10000);
-
+  
   watchdog_enable(0x7fffff, 1);
   watchdog_update();
-
-//  printf("Startup delay over\n");
 
 //  const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 //  gpio_init(LED_PIN);
@@ -133,11 +156,11 @@ int main() {
   can0RxTime = can0TxTime;
   can1TxTime = can0TxTime;
   can1RxTime = can0TxTime;
+  
+  speedUpdateTime = get_absolute_time();
 
 
   wd_cond_trigger();
-//  sleep_ms(1000);
-//  wd_cond_trigger();
 
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "EndlessLoop"
@@ -169,6 +192,14 @@ int main() {
              absolute_time_diff_us(can0RxTime, now) / 1000,
              absolute_time_diff_us(can1TxTime, now) / 1000,
              absolute_time_diff_us(can1RxTime, now) / 1000);
+
+      uint64_t fA = failedA;
+      uint64_t fDt = failedDt;
+      uint64_t fDs = failedDs;
+      if(fA != -1 && fDt != -1 && fDs != -1) {
+        printf("did not update speed: a: %ld dt: %ld ds: %ld\n", fA, fDt, fDs);
+      }
+
       lastPrintTime = now;
     }
   }
