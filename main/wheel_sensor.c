@@ -14,10 +14,13 @@
 #include "wheel_sensor.h"
 #include "powersaving.h"
 
+#define ABS_MINUS(a, b) a > b ? (a - b) : (b - a)
+
 #define WHEEL_CIRCUMFENCE_MM 2149
 #define uSEC_DELAY_x_KMH(x) (1000000 / (x * 1000 * 1000 / 60 / 60 / WHEEL_CIRCUMFENCE_MM))
 #define OUTPUT_PIN GPIO_NUM_7
 #define INPUT_PIN GPIO_NUM_19
+#define MAX_A 3
 
 static const char *WHEEL_TAG = "WHEEL";
 
@@ -48,6 +51,8 @@ uint64_t lastMilageUpdateTime = 0;
 uint32_t lastTickMileage = 0;
 extern uint32_t mileage;
 
+static uint64_t edgeAcceleration = -1;
+
 void enterPowerSave() {
   sleepMs = 500;
 }
@@ -61,6 +66,7 @@ static void negedgeHandler() {
   GPIO.status_w1tc.val = gpio_intr_status;
 
   static uint64_t lastInterruptTime = 0;
+  static uint64_t previousEdgesTimeDelta = -2;
   
   uint64_t now = esp_timer_get_time();
   bool tooFast = now - lastInterruptTime < 1000000 / 20; // allow max 20 rising edges per second -> more than 100 km/h
@@ -68,6 +74,16 @@ static void negedgeHandler() {
   if(tooFast) {
     return; // ignore this edge this is probably bounce
   }
+
+  // 1t/s -> 4t/s => previousEdgesTimeDelta = 1000000; timeSinceLastEdge = 250000; edgeAccel = 12000
+  uint64_t timeSinceLastEdge = now - newEdgeTime;
+  uint64_t edgeAccel = ABS_MINUS(1000000 * 1000 / previousEdgesTimeDelta, 1000000 * 1000 / timeSinceLastEdge) * 1000000 / timeSinceLastEdge;
+  if(edgeAccel > MAX_A * 1000 * 1000 / WHEEL_CIRCUMFENCE_MM) {
+    edgeAcceleration = edgeAccel;
+    return; // too steep of a acceleration. this is probably bounce
+  }
+
+  previousEdgesTimeDelta = timeSinceLastEdge;
   newEdgeTime = now;
   if(newEdge) {
     overrun = true;
@@ -190,6 +206,11 @@ _Noreturn static void wheelSensorTask() {
       tickMode = TICK_MODE_NORMAL; // everything recapped -> go to normal
     }
     lastTickFastMode = fastMode;
+
+    if(edgeAcceleration != -1) {
+      ESP_LOGI(WHEEL_TAG, "EdgeAccel %ld", edgeAcceleration);
+      edgeAcceleration = -1;
+    }
   }
 }
 
